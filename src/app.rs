@@ -166,7 +166,8 @@ impl App {
         let path = file.path.clone();
         if file.metadata.is_dir() {
             drop(file);
-            self.get_files(path)
+            self.current_dir = path;
+            self.get_files(self.current_dir.clone())
         } else {
             open::that(&path).unwrap();
         }
