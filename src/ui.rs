@@ -34,7 +34,7 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     let text = Paragraph::new(text).block(
         Block::default()
-            .title("Block 2")
+            .title("Search")
             .style(Style::default())
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded),
@@ -43,26 +43,6 @@ pub fn draw(f: &mut Frame, app: &App) {
 }
 
 pub fn render_files(f: &mut Frame, app: &App, rect: Rect) {
-    // let matcher = SkimMatcherV2::default();
-
-    // let to_borrow: Vec<File>;
-    // let files = if app.search_term.is_empty() {
-    //     &app.files
-    // } else {
-    //     to_borrow = app
-    //         .files
-    //         .iter()
-    //         .filter_map(|f| {
-    //             matcher
-    //                 .fuzzy_match(&f.name, &app.search_term)
-    //                 .filter(|score| *score > 0)
-    //                 .map(|_| f.clone())
-    //         })
-    //         .collect();
-
-    //     &to_borrow
-    // };
-
     let list = List::new(
         app.files
             .iter()

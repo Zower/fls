@@ -29,7 +29,7 @@ impl App {
     pub fn new(path: PathBuf) -> Self {
         let (sx, rx) = channel(100);
 
-        Self {
+        let mut inst = Self {
             unfiltered_files: vec![],
             files: vec![],
             current_dir: path,
@@ -40,7 +40,11 @@ impl App {
             color: Color::Green,
             rx,
             sx,
-        }
+        };
+
+        inst.get_files(inst.current_dir.clone());
+
+        inst
     }
 
     pub fn tick(&mut self) {
@@ -48,11 +52,12 @@ impl App {
             match change {
                 StateChange::NewFiles(mut files) => {
                     files.sort_unstable_by_key(|f| !f.metadata.is_dir());
+                    files[0].hovered = true;
+
                     // into() instead
                     self.unfiltered_files = to_rc_file(files);
                     self.reset_filter();
-                }
-                StateChange::Refresh => self.get_files(self.current_dir.clone()),
+                } // StateChange::Refresh => self.get_files(self.current_dir.clone()),
             };
         }
     }
@@ -94,8 +99,6 @@ impl App {
 
         let matcher = SkimMatcherV2::default();
 
-        let hover = self.take_hover();
-
         // TODO sort
         if !self.search_term.is_empty() {
             self.files = self
@@ -112,27 +115,33 @@ impl App {
             self.reset_filter();
         }
 
-        if let Some(file) = self.files.get(0) {
-            file.borrow_mut().hovered = Some(hover.1);
-        } else {
-            self.unfiltered_files[0].borrow_mut().hovered = Some(hover.1);
-        }
+        self.move_hover(0);
     }
 
     fn take_action(&mut self, action: Action) {
         match action {
             Action::Quit => self.should_quit = true,
             Action::Up => {
-                let (prev_idx, hover) = self.take_hover();
-
-                self.files[prev_idx.saturating_sub(1)].borrow_mut().hovered = Some(hover);
+                if let Some((prev_idx, _)) = self.find_hover() {
+                    self.move_hover(prev_idx.saturating_sub(1))
+                } else {
+                    if let Some(file) = self.files.get(0) {
+                        file.borrow_mut().hovered = true;
+                    }
+                }
             }
             Action::Down => {
-                let (prev_idx, hover) = self.take_hover();
-
-                self.files[prev_idx.saturating_add(1).min(self.files.len() - 1)]
-                    .borrow_mut()
-                    .hovered = Some(hover);
+                if let Some((prev_idx, _)) = self.find_hover() {
+                    self.move_hover(
+                        prev_idx
+                            .saturating_add(1)
+                            .min(self.files.len().saturating_sub(1)),
+                    )
+                } else {
+                    if let Some(file) = self.files.get(0) {
+                        file.borrow_mut().hovered = true;
+                    }
+                }
             }
             Action::SearchMode => self.mode = Mode::Search,
             // consider ptr_eq instead of contains()
@@ -142,25 +151,8 @@ impl App {
                     file.selected = !file.selected;
                 }
             }
-            // match self.selected.contains(self.find_hover()) {
-            // true => {
-            //     self.selected.drain_filter(|s| s == self.find_hover());
-            // }
-            // false => self.selected.push(Rc::clone(self.find_hover())),
-            // },
             Action::Delete => self.delete_current(),
         }
-    }
-
-    // fn reset(&mut self) {
-    //     self.search_term.clear();
-    //     self.selected.clear();
-    //     let hover = self.take_hover();
-    //     self.unfiltered_files[0].borrow_mut().hovered = Some(hover.1);
-    // }
-
-    pub fn init(&mut self) {
-        self.get_files(self.current_dir.clone());
     }
 
     fn get_files(&mut self, path: PathBuf) {
@@ -194,7 +186,7 @@ impl App {
             false => {
                 let file = self
                     .unfiltered_files
-                    .drain_filter(|f| f.borrow().hovered.is_some())
+                    .drain_filter(|f| f.borrow().hovered)
                     .map(|f| (f.borrow().metadata.is_dir(), f.borrow().path.clone()))
                     .next()
                     .unwrap();
@@ -211,39 +203,48 @@ impl App {
         for file in &self.unfiltered_files {
             self.files.push(Rc::clone(file));
         }
+
+        self.move_hover(0);
     }
 
     pub fn find_hover(&self) -> Option<(usize, &RcFile)> {
         self.files
             .iter()
             .enumerate()
-            .find(|(_, f)| f.borrow().hovered.is_some())
+            .find(|(_, f)| f.borrow().is_hovered())
     }
 
-    fn take_hover(&self) -> (usize, Hover) {
-        let (idx, file) = self
-            .files
-            .iter()
-            .enumerate()
-            .find(|(_, f)| f.borrow().hovered.is_some())
-            .unwrap();
+    fn move_hover(&mut self, new: usize) {
+        if let Some(file) = self.find_hover() {
+            file.1.borrow_mut().hovered = false;
+        }
 
-        (idx, file.borrow_mut().hovered.take().unwrap())
+        if let Some(val) = self.files.get(new) {
+            val.borrow_mut().hovered = true;
+        }
     }
+
+    // fn take_hover(&mut self) -> (usize, Hover) {
+    //     self.files
+    //         .iter()
+    //         .enumerate()
+    //         .find(|(_, f)| f.borrow().hovered.is_some())
+    //         .map(|(idx, file)| (idx, file.borrow_mut().hovered.take().unwrap()))
+    //         .unwrap_or_else(|| (0, self.empty_hover.take().unwrap()))
+    // }
 }
 
-async fn delete(file: (bool, PathBuf), sx: Sender<StateChange>) {
+async fn delete(file: (bool, PathBuf), _sx: Sender<StateChange>) {
     if file.0 {
-        // TODO dont borrow
         fs::remove_dir_all(file.1).await.unwrap();
     } else {
         fs::remove_file(file.1).await.unwrap();
     }
 
-    sx.send(StateChange::Refresh).await.unwrap();
+    // sx.send(StateChange::Refresh).await.unwrap();
 }
 
-async fn delete_multiple(files: Vec<(bool, PathBuf)>, sx: Sender<StateChange>) {
+async fn delete_multiple(files: Vec<(bool, PathBuf)>, _sx: Sender<StateChange>) {
     for file in files {
         if file.0 {
             // TODO dont clone/borrow
@@ -253,7 +254,7 @@ async fn delete_multiple(files: Vec<(bool, PathBuf)>, sx: Sender<StateChange>) {
         }
     }
 
-    sx.send(StateChange::Refresh).await.unwrap();
+    // sx.send(StateChange::Refresh).await.unwrap();
 }
 
 impl TryFrom<KeyCode> for Action {
@@ -287,8 +288,26 @@ pub struct File {
     pub path: PathBuf,
     pub parent: PathBuf,
     pub depth: usize,
-    pub hovered: Option<Hover>,
+    pub hovered: bool,
     pub selected: bool,
+}
+
+impl File {
+    pub fn new(name: String, depth: usize, path: PathBuf, metadata: Metadata) -> Self {
+        Self {
+            name,
+            depth,
+            path,
+            parent: "".into(),
+            metadata,
+            hovered: false,
+            selected: false,
+        }
+    }
+
+    pub fn is_hovered(&self) -> bool {
+        self.hovered
+    }
 }
 
 impl PartialEq for File {
@@ -296,9 +315,6 @@ impl PartialEq for File {
         self.path.eq(&other.path)
     }
 }
-
-#[derive(Debug)]
-pub struct Hover;
 
 #[derive(PartialEq, Eq)]
 pub enum Mode {
@@ -309,7 +325,7 @@ pub enum Mode {
 #[derive(Debug)]
 pub enum StateChange {
     NewFiles(Vec<File>),
-    Refresh,
+    // Refresh,
 }
 
 enum Action {

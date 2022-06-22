@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tokio::sync::mpsc::Sender;
 use walkdir::WalkDir;
 
-use crate::app::{File, Hover, StateChange};
+use crate::app::{File, StateChange};
 
 pub enum Task {
     GetFiles(PathBuf),
@@ -19,27 +19,16 @@ impl Task {
 
                     let mut files = vec![];
 
-                    let mut first = true;
                     for file in walk {
                         let file = file.unwrap();
                         let metadata = file.metadata().unwrap();
-                        files.push(File {
-                            name: file.file_name().to_os_string().into_string().unwrap(),
-                            depth: file.depth(),
-                            path: file.into_path(),
-                            parent: "".into(),
-                            metadata: metadata.into(),
-                            hovered: if first {
-                                first = false;
-                                Some(Hover)
-                            } else {
-                                None
-                            },
-                            selected: false,
-                        });
+                        files.push(File::new(
+                            file.file_name().to_os_string().into_string().unwrap(),
+                            file.depth(),
+                            file.into_path(),
+                            metadata.into(),
+                        ));
                     }
-                    // while let Ok(Some(file)) = dir.next_entry().await {
-                    // }
 
                     tx.send(StateChange::NewFiles(files)).await.unwrap();
                 }

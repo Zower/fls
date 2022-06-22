@@ -30,8 +30,6 @@ async fn main() -> Result<(), io::Error> {
 
     let mut rcv = Events::start();
 
-    app.init();
-
     loop {
         if app.should_quit {
             break;
