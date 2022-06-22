@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
+use jwalk::WalkDir;
 use tokio::sync::mpsc::Sender;
-use walkdir::WalkDir;
 
 use crate::app::{File, StateChange};
 
@@ -14,7 +14,10 @@ impl Task {
         let task = match self {
             Task::GetFiles(path) => {
                 async move {
-                    let walk = WalkDir::new(path).min_depth(1).max_depth(1);
+                    let walk = WalkDir::new(path)
+                        .skip_hidden(false)
+                        .min_depth(1)
+                        .max_depth(1);
                     // let mut dir = fs::read_dir("aa").await.unwrap();
 
                     let mut files = vec![];
@@ -25,7 +28,8 @@ impl Task {
                         files.push(File::new(
                             file.file_name().to_os_string().into_string().unwrap(),
                             file.depth(),
-                            file.into_path(),
+                            file.path(),
+                            file.parent_path().into(),
                             metadata.into(),
                         ));
                     }

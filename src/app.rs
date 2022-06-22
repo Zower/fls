@@ -29,7 +29,7 @@ impl App {
     pub fn new(path: PathBuf) -> Self {
         let (sx, rx) = channel(100);
 
-        let mut inst = Self {
+        let inst = Self {
             unfiltered_files: vec![],
             files: vec![],
             current_dir: path,
@@ -76,6 +76,7 @@ impl App {
                 self.search_term.clear();
                 self.reset_filter();
             }
+            KeyCode::Backspace if (self.mode == Mode::Normal) => self.go_up_dir(),
             _ => match self.mode {
                 Mode::Normal => match key.try_into() {
                     Ok(action) => self.take_action(action),
@@ -155,7 +156,7 @@ impl App {
         }
     }
 
-    fn get_files(&mut self, path: PathBuf) {
+    fn get_files(&self, path: PathBuf) {
         Task::run(Task::GetFiles(path), self.sx.clone());
     }
 
@@ -224,14 +225,10 @@ impl App {
         }
     }
 
-    // fn take_hover(&mut self) -> (usize, Hover) {
-    //     self.files
-    //         .iter()
-    //         .enumerate()
-    //         .find(|(_, f)| f.borrow().hovered.is_some())
-    //         .map(|(idx, file)| (idx, file.borrow_mut().hovered.take().unwrap()))
-    //         .unwrap_or_else(|| (0, self.empty_hover.take().unwrap()))
-    // }
+    fn go_up_dir(&mut self) {
+        self.current_dir.pop();
+        self.get_files(self.current_dir.clone());
+    }
 }
 
 async fn delete(file: (bool, PathBuf), _sx: Sender<StateChange>) {
@@ -293,12 +290,18 @@ pub struct File {
 }
 
 impl File {
-    pub fn new(name: String, depth: usize, path: PathBuf, metadata: Metadata) -> Self {
+    pub fn new(
+        name: String,
+        depth: usize,
+        path: PathBuf,
+        parent: PathBuf,
+        metadata: Metadata,
+    ) -> Self {
         Self {
             name,
             depth,
             path,
-            parent: "".into(),
+            parent,
             metadata,
             hovered: false,
             selected: false,
