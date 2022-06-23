@@ -64,19 +64,16 @@ impl App {
 
     pub fn parse_key(&mut self, key: KeyCode) {
         match key {
-            KeyCode::Enter => match self.mode {
-                Mode::Normal => self.open(),
-                Mode::Search => {
-                    self.mode = Mode::Normal;
-                    self.search_term.clear();
-                }
-            },
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.search_term.clear();
                 self.reset_filter();
             }
-            KeyCode::Backspace if (self.mode == Mode::Normal) => self.go_up_dir(),
+            KeyCode::Enter => {
+                self.open();
+                self.search_term.clear();
+                self.refresh_filter();
+            }
             _ => match self.mode {
                 Mode::Normal => match key.try_into() {
                     Ok(action) => self.take_action(action),
@@ -98,6 +95,10 @@ impl App {
             _ => (),
         }
 
+        self.refresh_filter();
+    }
+
+    fn refresh_filter(&mut self) {
         let matcher = SkimMatcherV2::default();
 
         // TODO sort
@@ -153,6 +154,14 @@ impl App {
                 }
             }
             Action::Delete => self.delete_current(),
+            Action::Open => match self.mode {
+                Mode::Normal => self.open(),
+                Mode::Search => {
+                    self.mode = Mode::Normal;
+                    self.search_term.clear();
+                }
+            },
+            Action::Back => self.go_up_dir(),
         }
     }
 
@@ -260,6 +269,8 @@ impl TryFrom<KeyCode> for Action {
 
     fn try_from(value: KeyCode) -> Result<Self, Self::Error> {
         match value {
+            KeyCode::Char('n') => Ok(Action::Back),
+            KeyCode::Char('o') => Ok(Action::Open),
             KeyCode::Char('d') => Ok(Action::Delete),
             KeyCode::Char('t') => Ok(Action::ToggleCurrent),
             KeyCode::Char('s') | KeyCode::Char('/') => Ok(Action::SearchMode),
@@ -340,6 +351,8 @@ enum Action {
 
     Up,
     Down,
+    Back,
+    Open,
 
     Quit,
 }
