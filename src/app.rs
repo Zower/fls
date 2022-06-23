@@ -1,6 +1,6 @@
 use std::{cell::RefCell, fs::Metadata, path::PathBuf, rc::Rc};
 
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use tokio::{
     fs,
@@ -8,7 +8,7 @@ use tokio::{
 };
 use tui::style::Color;
 
-use crate::task::Task;
+use crate::{mode::Mode, task::Task};
 
 type RcFile = Rc<RefCell<File>>;
 
@@ -62,40 +62,22 @@ impl App {
         }
     }
 
-    pub fn parse_key(&mut self, key: KeyCode) {
-        match key {
+    // Todo should delegate to each mode
+    pub fn parse_key(&mut self, key: KeyEvent) {
+        let KeyEvent { code, modifiers } = key;
+
+        match code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.search_term.clear();
                 self.reset_filter();
             }
-            KeyCode::Enter => {
-                self.open();
-                self.search_term.clear();
-                self.refresh_filter();
-            }
-            _ => match self.mode {
-                Mode::Normal => match key.try_into() {
-                    Ok(action) => self.take_action(action),
-                    Err(()) => (),
-                },
-                Mode::Search => self.add_to_search(key),
+            KeyCode::Enter => self.open(),
+            _ => match self.mode.parse_key(key) {
+                Some(action) => self.take_action(action),
+                None => (),
             },
         }
-    }
-
-    pub fn add_to_search(&mut self, key: KeyCode) {
-        match key {
-            KeyCode::Backspace => {
-                self.search_term.pop();
-            }
-            KeyCode::Char(c) => {
-                self.search_term.push(c);
-            }
-            _ => (),
-        }
-
-        self.refresh_filter();
     }
 
     fn refresh_filter(&mut self) {
@@ -154,14 +136,21 @@ impl App {
                 }
             }
             Action::Delete => self.delete_current(),
-            Action::Open => match self.mode {
-                Mode::Normal => self.open(),
-                Mode::Search => {
-                    self.mode = Mode::Normal;
-                    self.search_term.clear();
-                }
-            },
+            Action::Open => self.open(),
             Action::Back => self.go_up_dir(),
+            Action::AddToSearch(c) => {
+                self.search_term.push(c);
+                self.refresh_filter()
+            }
+            Action::PopFromSearch => {
+                self.search_term.pop();
+                self.refresh_filter()
+            }
+            Action::FreezeSearch => {
+                self.mode = Mode::Normal;
+                self.search_term.clear();
+                self.reset_filter();
+            }
         }
     }
 
@@ -178,8 +167,12 @@ impl App {
             self.current_dir = path;
             self.get_files(self.current_dir.clone())
         } else {
+            drop(file);
             open::that(&path).unwrap();
         }
+
+        self.search_term.clear();
+        self.reset_filter();
     }
 
     fn delete_current(&mut self) {
@@ -264,24 +257,6 @@ async fn delete_multiple(files: Vec<(bool, PathBuf)>, _sx: Sender<StateChange>) 
     // sx.send(StateChange::Refresh).await.unwrap();
 }
 
-impl TryFrom<KeyCode> for Action {
-    type Error = ();
-
-    fn try_from(value: KeyCode) -> Result<Self, Self::Error> {
-        match value {
-            KeyCode::Char('n') => Ok(Action::Back),
-            KeyCode::Char('o') => Ok(Action::Open),
-            KeyCode::Char('d') => Ok(Action::Delete),
-            KeyCode::Char('t') => Ok(Action::ToggleCurrent),
-            KeyCode::Char('s') | KeyCode::Char('/') => Ok(Action::SearchMode),
-            KeyCode::Char('i') => Ok(Action::Up),
-            KeyCode::Char('e') => Ok(Action::Down),
-            KeyCode::Char('q') => Ok(Action::Quit),
-            _ => Err(()),
-        }
-    }
-}
-
 fn to_rc_file(files: Vec<File>) -> Vec<RcFile> {
     files
         .into_iter()
@@ -331,28 +306,25 @@ impl PartialEq for File {
     }
 }
 
-#[derive(PartialEq, Eq)]
-pub enum Mode {
-    Normal,
-    Search,
-}
-
 #[derive(Debug)]
 pub enum StateChange {
     NewFiles(Vec<File>),
     // Refresh,
 }
 
-enum Action {
-    Delete,
-
-    ToggleCurrent,
-    SearchMode,
-
+pub enum Action {
     Up,
     Down,
     Back,
     Open,
+
+    Delete,
+    ToggleCurrent,
+    SearchMode,
+
+    AddToSearch(char),
+    PopFromSearch,
+    FreezeSearch,
 
     Quit,
 }

@@ -2,6 +2,7 @@
 
 mod app;
 mod events;
+mod mode;
 mod task;
 mod ui;
 
@@ -40,7 +41,7 @@ async fn main() -> Result<(), io::Error> {
         })?;
 
         while let Ok(key) = rcv.try_recv() {
-            app.parse_key(key.code);
+            app.parse_key(key);
         }
 
         tokio::time::sleep(Duration::from_millis(5)).await;

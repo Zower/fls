@@ -9,7 +9,8 @@ use tui::{
     widgets::{Block, Borders, List, ListItem, ListState},
 };
 
-use crate::app::{App, Mode};
+use crate::app::App;
+use crate::mode::Mode;
 
 type Frame<'a> = tui::Frame<'a, CrosstermBackend<io::Stdout>>;
 
