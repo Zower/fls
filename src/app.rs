@@ -64,7 +64,7 @@ impl App {
 
     // Todo should delegate to each mode
     pub fn parse_key(&mut self, key: KeyEvent) {
-        let KeyEvent { code, modifiers } = key;
+        let KeyEvent { code, modifiers: _ } = key;
 
         match code {
             KeyCode::Esc => {
@@ -72,7 +72,6 @@ impl App {
                 self.search_term.clear();
                 self.reset_filter();
             }
-            KeyCode::Enter => self.open(),
             _ => match self.mode.parse_key(key) {
                 Some(action) => self.take_action(action),
                 None => (),
@@ -149,7 +148,6 @@ impl App {
             Action::FreezeSearch => {
                 self.mode = Mode::Normal;
                 self.search_term.clear();
-                self.reset_filter();
             }
         }
     }
@@ -231,6 +229,9 @@ impl App {
     fn go_up_dir(&mut self) {
         self.current_dir.pop();
         self.get_files(self.current_dir.clone());
+
+        self.search_term.clear();
+        self.reset_filter();
     }
 }
 
