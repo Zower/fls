@@ -2,17 +2,17 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::Action;
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Mode {
     Normal,
-    Search,
+    Search(SearchMode),
 }
 
 impl Mode {
     pub fn parse_key(&self, key: KeyEvent) -> Option<Action> {
         match self {
             Mode::Normal => Mode::parse_normal(key),
-            Mode::Search => Mode::parse_search(key),
+            Mode::Search(_) => Mode::parse_search(key),
         }
     }
 
@@ -20,13 +20,16 @@ impl Mode {
         let KeyEvent { code, modifiers: _ } = key;
 
         match code {
+            KeyCode::Char('e') => Some(Action::Down),
+            KeyCode::Char('i') => Some(Action::Up),
             KeyCode::Char('n') => Some(Action::Back),
             KeyCode::Char('o') => Some(Action::Open),
             KeyCode::Char('d') => Some(Action::Delete),
             KeyCode::Char('t') => Some(Action::ToggleCurrent),
-            KeyCode::Char('s') | KeyCode::Char('/') => Some(Action::SearchMode),
-            KeyCode::Char('i') => Some(Action::Up),
-            KeyCode::Char('e') => Some(Action::Down),
+            KeyCode::Char('s') | KeyCode::Char('/') => {
+                Some(Action::SearchMode(SearchMode::Regular))
+            }
+            KeyCode::Char('g') => Some(Action::SearchMode(SearchMode::Global(10))),
             KeyCode::Char('q') => Some(Action::Quit),
             _ => None,
         }
@@ -54,4 +57,12 @@ impl Mode {
             _ => None,
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SearchMode {
+    Regular,
+    // Files in subdirectories as well
+    // .0 is depth
+    Global(usize),
 }

@@ -10,7 +10,7 @@ use tui::{
 };
 
 use crate::app::App;
-use crate::mode::Mode;
+use crate::mode::{Mode, SearchMode};
 
 type Frame<'a> = tui::Frame<'a, CrosstermBackend<io::Stdout>>;
 
@@ -26,7 +26,7 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     let s;
 
-    let text = if app.mode == Mode::Search {
+    let text = if app.mode == Mode::Search(SearchMode::Regular) {
         s = format!("{} {}", "/", app.search_term.as_str());
         &s
     } else {

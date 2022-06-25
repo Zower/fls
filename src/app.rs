@@ -1,6 +1,6 @@
 use std::{cell::RefCell, fs::Metadata, path::PathBuf, rc::Rc};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use tokio::{
     fs,
@@ -8,7 +8,10 @@ use tokio::{
 };
 use tui::style::Color;
 
-use crate::{mode::Mode, task::Task};
+use crate::{
+    mode::{Mode, SearchMode},
+    task::Task,
+};
 
 type RcFile = Rc<RefCell<File>>;
 
@@ -21,8 +24,8 @@ pub struct App {
     pub split: bool,
     pub should_quit: bool,
     pub color: Color,
-    rx: Receiver<StateChange>,
-    sx: Sender<StateChange>,
+    rx: Receiver<Message>,
+    sx: Sender<Message>,
 }
 
 impl App {
@@ -50,7 +53,7 @@ impl App {
     pub fn tick(&mut self) {
         while let Ok(change) = self.rx.try_recv() {
             match change {
-                StateChange::NewFiles(mut files) => {
+                Message::NewFiles(mut files) => {
                     files.sort_unstable_by_key(|f| !f.metadata.is_dir());
                     files[0].hovered = true;
 
@@ -126,7 +129,7 @@ impl App {
                     }
                 }
             }
-            Action::SearchMode => self.mode = Mode::Search,
+            Action::SearchMode(m) => self.mode = Mode::Search(m),
             // consider ptr_eq instead of contains()
             Action::ToggleCurrent => {
                 if let Some(v) = self.find_hover() {
@@ -175,6 +178,9 @@ impl App {
 
     fn delete_current(&mut self) {
         let tx = self.sx.clone();
+
+        let old_idx = self.find_hover().map(|(i, _)| i).unwrap_or(0);
+
         match self.unfiltered_files.iter().any(|f| f.borrow().selected) {
             true => {
                 let files = self
@@ -197,7 +203,20 @@ impl App {
             }
         }
 
-        self.reset_filter();
+        self.files.clear();
+        for file in &self.unfiltered_files {
+            self.files.push(Rc::clone(file));
+        }
+
+        let idx = if self.files.get(old_idx).is_some() {
+            old_idx
+        } else if self.files.get(old_idx.saturating_sub(1)).is_some() {
+            old_idx.saturating_sub(1)
+        } else {
+            0
+        };
+
+        self.move_hover(idx);
     }
 
     fn reset_filter(&mut self) {
@@ -235,7 +254,7 @@ impl App {
     }
 }
 
-async fn delete(file: (bool, PathBuf), _sx: Sender<StateChange>) {
+async fn delete(file: (bool, PathBuf), _sx: Sender<Message>) {
     if file.0 {
         fs::remove_dir_all(file.1).await.unwrap();
     } else {
@@ -245,7 +264,7 @@ async fn delete(file: (bool, PathBuf), _sx: Sender<StateChange>) {
     // sx.send(StateChange::Refresh).await.unwrap();
 }
 
-async fn delete_multiple(files: Vec<(bool, PathBuf)>, _sx: Sender<StateChange>) {
+async fn delete_multiple(files: Vec<(bool, PathBuf)>, _sx: Sender<Message>) {
     for file in files {
         if file.0 {
             // TODO dont clone/borrow
@@ -308,8 +327,9 @@ impl PartialEq for File {
 }
 
 #[derive(Debug)]
-pub enum StateChange {
+pub enum Message {
     NewFiles(Vec<File>),
+    FileSearchDone(Vec<File>),
     // Refresh,
 }
 
@@ -321,7 +341,7 @@ pub enum Action {
 
     Delete,
     ToggleCurrent,
-    SearchMode,
+    SearchMode(SearchMode),
 
     AddToSearch(char),
     PopFromSearch,

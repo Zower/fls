@@ -3,14 +3,14 @@ use std::path::PathBuf;
 use jwalk::WalkDir;
 use tokio::sync::mpsc::Sender;
 
-use crate::app::{File, StateChange};
+use crate::app::{File, Message};
 
 pub enum Task {
     GetFiles(PathBuf),
 }
 
 impl Task {
-    pub fn run(self, tx: Sender<StateChange>) {
+    pub fn run(self, tx: Sender<Message>) {
         let task = match self {
             Task::GetFiles(path) => {
                 async move {
@@ -34,7 +34,7 @@ impl Task {
                         ));
                     }
 
-                    tx.send(StateChange::NewFiles(files)).await.unwrap();
+                    tx.send(Message::NewFiles(files)).await.unwrap();
                 }
             }
         };
