@@ -1,61 +1,38 @@
-#![feature(drain_filter)]
+// #![feature(drain_filter)]
 
 mod app;
-mod events;
 mod mode;
-mod task;
+mod tasks;
 mod ui;
 
-use std::{io, time::Duration};
+use std::io;
 
-use app::App;
-use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-use events::Events;
-use tui::{backend::CrosstermBackend, Terminal};
+use app::Fls;
+use iced::{pure::Application, Settings};
 
-#[tokio::main]
-async fn main() -> Result<(), io::Error> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    let mut app = App::new(std::env::current_dir().unwrap());
-
-    let mut rcv = Events::start();
-
-    loop {
-        if app.should_quit {
-            break;
-        }
-
-        terminal.draw(|f| {
-            ui::draw(f, &app);
-        })?;
-
-        while let Ok(key) = rcv.try_recv() {
-            app.parse_key(key);
-        }
-
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        app.tick();
-    }
-
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-
-    terminal.show_cursor()?;
+fn main() -> Result<(), io::Error> {
+    Fls::run(Settings {
+        flags: std::env::current_dir().unwrap(),
+        id: None,
+        window: iced::window::Settings {
+            size: (800, 600),
+            position: iced::window::Position::Centered,
+            min_size: Some((400, 300)),
+            max_size: None,
+            resizable: true,
+            decorations: true,
+            transparent: false,
+            always_on_top: true,
+            icon: None,
+        },
+        default_font: None,
+        default_text_size: 20,
+        text_multithreading: false,
+        antialiasing: true,
+        exit_on_close_request: true,
+        try_opengles_first: false,
+    })
+    .unwrap();
 
     Ok(())
 }
