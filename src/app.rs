@@ -329,7 +329,7 @@ impl PartialEq for File {
 #[derive(Debug)]
 pub enum Message {
     NewFiles(Vec<File>),
-    FileSearchDone(Vec<File>),
+    // FileSearchDone(Vec<File>),
     // Refresh,
 }
 
