@@ -7,6 +7,8 @@ use iced::{
 use iced_native::{event::Status, keyboard::Event, subscription::events_with};
 use std::{fs::Metadata, ops::Index, path::PathBuf};
 
+use tokio::fs::remove_file;
+
 use crate::{
     mode::{Mode, SearchMode},
     tasks::get_files,
@@ -19,7 +21,11 @@ pub enum Message {
     FilesLoaded(Vec<File>),
     KeyEvent(Event),
     Button,
+    FileDeleteResult(Result<(), FileDeleteError>),
 }
+
+#[derive(Debug, Clone)]
+pub struct FileDeleteError(pub PathBuf);
 
 #[derive(Debug)]
 pub struct DisplayedFile {
@@ -35,6 +41,26 @@ impl Files {
     pub fn new() -> Self {
         Self(Vec::new())
     }
+
+    pub fn remove(&mut self, index: usize) -> DisplayedFile {
+        self.0.remove(index)
+    }
+
+    pub fn drain(&mut self, p: impl Fn(&DisplayedFile) -> bool) -> Vec<DisplayedFile> {
+        let mut vec = Vec::new();
+        let mut i = 0;
+        while i < self.0.len() {
+            let item = &mut self.0[i];
+            if item.curr_score > 0 && p(item) {
+                vec.push(self.0.remove(i));
+            } else {
+                i += 1;
+            }
+        }
+
+        vec
+    }
+    // self.0.(f)
 
     pub fn files(&self) -> impl Iterator<Item = &DisplayedFile> {
         self.0.iter().filter(|f| f.curr_score > 0)
@@ -98,6 +124,7 @@ impl Application for Fls {
             Message::Button => {
                 command = self.take_action(Action::NewMode(Mode::Search(SearchMode::Regular)))
             }
+            Message::FileDeleteResult(r) => r.unwrap(),
         }
         command
     }
@@ -187,7 +214,33 @@ impl Fls {
                     f.selected = !f.selected;
                 });
             }
-            Action::Delete => (),
+            Action::Delete => {
+                // TODO: Double clone is unideal but closures make rust stuped
+                let create_command = |path: PathBuf| {
+                    Command::perform(remove_file(path.clone()), move |r| {
+                        let clone = path.clone();
+                        Message::FileDeleteResult(r.map_err(|_| FileDeleteError(clone)))
+                    })
+                };
+
+                //todo prob deletes once that shouldnt be
+                if self.files().any(|f| f.selected) {
+                    let files = self.cache.drain(|f| f.selected);
+                    command = Command::batch(files.into_iter().map(|f| create_command(f.data.path)))
+                } else {
+                    let file = self.cache.remove(self.hovered);
+
+                    command = create_command(file.data.path)
+                }
+
+                let count = self.files().count() - 1;
+
+                self.hovered = if self.hovered < count {
+                    self.hovered
+                } else {
+                    count
+                }
+            }
             Action::Open => {
                 let file = &self.cache[self.hovered];
                 let path = &file.data.path;

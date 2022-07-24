@@ -10,14 +10,21 @@ pub mod colors {
 
     pub const DARK_GRAY: Color = Color::from_rgb(0.1, 0.1, 0.1);
     pub const SEMI_DARK_GRAY: Color = Color::from_rgb(0.14, 0.14, 0.14);
+    pub const LIGHT_GRAY: Color = Color::from_rgb(0.65, 0.65, 0.65);
     pub const RED: Color = Color::from_rgb(0.21, 0.11, 0.11);
-    pub const BLUE: Color = Color::from_rgb(0.12, 0.21, 0.19);
+    pub const ACCENT_BLUE: Color = Color::from_rgb(0.12, 0.21, 0.19);
 
     pub const DARK_BLUE: Color = Color::from_rgb(0.13, 0.13, 0.23);
-    pub const LIGHT_BLUE: Color = Color::from_rgb(0.29, 0.31, 0.41);
+    pub const BLUE: Color = Color::from_rgb(0.29, 0.31, 0.41);
+    pub const SKY_BLUE: Color = Color::from_rgb(0.56, 0.79, 0.9);
     pub const LIGHT_PURPLE: Color = Color::from_rgb(0.6, 0.55, 0.6);
     pub const BEIGE: Color = Color::from_rgb(0.79, 0.68, 0.65);
     pub const LIGHT: Color = Color::from_rgb(0.95, 0.91, 0.89);
+
+    pub const LIGHT_GREEN: Color = Color::from_rgb(0., 0.88, 0.57);
+    pub const DARK_GREEN: Color = Color::from_rgb(0., 0.45, 0.36);
+    pub const SEAFOAM_GREEN: Color = Color::from_rgb(0.76, 0.85, 0.72);
+    pub const SCALLOP_SEASHELL: Color = Color::from_rgb(0.9, 0.64, 0.6);
 }
 
 #[derive(Debug, Default)]
@@ -31,7 +38,7 @@ impl application::StyleSheet for Theme {
 
     fn appearance(&self, _: Self::Style) -> iced::application::Appearance {
         iced::application::Appearance {
-            background_color: colors::DARK_GRAY,
+            background_color: colors::RED,
             text_color: Color::WHITE,
         }
     }
@@ -42,6 +49,13 @@ pub enum ThemedContainer {
     #[default]
     Default,
     Color(Color),
+    Custom(iced::container::Appearance),
+}
+
+impl Theme {
+    pub fn container_default() -> iced::container::Appearance {
+        <Self as container::StyleSheet>::appearance(&Theme::Default, ThemedContainer::Default)
+    }
 }
 
 impl container::StyleSheet for Theme {
@@ -49,14 +63,15 @@ impl container::StyleSheet for Theme {
 
     fn appearance(&self, style: Self::Style) -> iced::container::Appearance {
         let color = match style {
-            ThemedContainer::Default => colors::DARK_GRAY,
+            ThemedContainer::Default => colors::DARK_GREEN,
             ThemedContainer::Color(color) => color,
+            ThemedContainer::Custom(c) => return c,
         };
 
         iced::container::Appearance {
             text_color: Some(colors::LIGHT),
             background: Some(Background::Color(color)),
-            border_radius: 5.,
+            border_radius: 0.,
             border_width: 0.,
             border_color: colors::DARK_BLUE,
         }
@@ -78,9 +93,9 @@ impl button::StyleSheet for Theme {
             ThemedButton::Default => colors::LIGHT_PURPLE,
             ThemedButton::Search(is_active) => {
                 if is_active {
-                    colors::BLUE
+                    colors::RED
                 } else {
-                    colors::LIGHT_BLUE
+                    colors::LIGHT_GREEN
                 }
             }
         };
@@ -110,8 +125,8 @@ impl iced_native::widget::text::StyleSheet for Theme {
     fn appearance(&self, style: Self::Style) -> iced_native::widget::text::Appearance {
         let color = match style {
             ThemedText::Default => colors::LIGHT,
-            ThemedText::Hovered => colors::BEIGE,
-            ThemedText::Selected => colors::RED,
+            ThemedText::Hovered => colors::LIGHT_GREEN,
+            ThemedText::Selected => colors::DARK_BLUE,
         };
 
         iced_native::widget::text::Appearance { color: Some(color) }

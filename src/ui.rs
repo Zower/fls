@@ -1,10 +1,10 @@
 use iced::{
     pure::{
         text,
-        widget::{Button, Column, Container, Row},
+        widget::{Button, Column, Container, Row, Scrollable},
         Element,
     },
-    Length, Padding, Space,
+    Background, Length, Padding, Space,
 };
 
 use crate::{
@@ -31,8 +31,10 @@ pub fn draw(app: &Fls) -> Element<'_, Message, iced::Renderer<Theme>> {
         .push(draw_files(app));
 
     col = col
-        .push(Space::new(Length::Fill, Length::FillPortion(15)))
+        // .push(Space::new(Length::Fill, Length::FillPortion(15)))
         .push(draw_search(app));
+
+    // col.push(Scrollable::new(&mut State::new()).into());
     // .push(draw_search(app));
 
     // TODO sort
@@ -49,16 +51,15 @@ pub fn draw_status(app: &Fls) -> Element<'_, Message, iced::Renderer<Theme>> {
             .push(text(app.current_dir.to_str().unwrap_or("Unknown"))),
     )
     .width(Length::Fill)
-    .height(Length::Units(30))
-    .style(ThemedContainer::Color(colors::DARK_BLUE))
+    .height(Length::Units(50))
+    .style(ThemedContainer::Color(colors::DARK_GRAY))
     .center_x()
     .center_y()
     .into()
 }
 
 pub fn draw_files(app: &Fls) -> Element<'_, Message, iced::Renderer<Theme>> {
-    // .padding(Padding::new(10));
-    let mut col = Column::new().padding(Padding::new(10));
+    let mut col = Column::new();
 
     for (idx, file) in app.files().enumerate() {
         let style = if idx == app.hovered {
@@ -72,16 +73,33 @@ pub fn draw_files(app: &Fls) -> Element<'_, Message, iced::Renderer<Theme>> {
         let after = if file.data.metadata.is_dir() { "/" } else { "" };
 
         col = col
-            .push(
-                Container::new(text(format!("{}{after}", &file.data.name)).style(style))
-                    .style(ThemedContainer::Color(colors::SEMI_DARK_GRAY))
-                    .padding(Padding::new(7))
-                    .width(Length::Fill),
-            )
+            // .push(
+            //     Container::new(text(format!("{}{after}", &file.data.name)).style(style))
+            //         .style(ThemedContainer::Color(colors::SEMI_DARK_GRAY))
+            //         .padding(Padding::new(7))
+            //         .width(Length::Fill),
+            // )
+            .push(text(format!("{}{after}", &file.data.name)).style(style))
             .push(Space::new(Length::Fill, Length::Units(3)));
     }
 
-    col.into()
+    Container::new(
+        Container::new(Scrollable::new(col))
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .padding(Padding::new(10))
+            .style(ThemedContainer::Custom(iced::container::Appearance {
+                border_width: 0.6,
+                border_radius: 5.,
+                border_color: colors::LIGHT_GRAY,
+                background: Some(Background::Color(colors::SEAFOAM_GREEN)),
+                ..Theme::container_default()
+            })),
+    )
+    .height(Length::Fill)
+    .width(Length::Fill)
+    .padding(Padding::new(10))
+    .into()
 }
 
 pub fn draw_search(app: &Fls) -> Element<'_, Message, iced::Renderer<Theme>> {
@@ -90,7 +108,7 @@ pub fn draw_search(app: &Fls) -> Element<'_, Message, iced::Renderer<Theme>> {
         _ => false,
     };
 
-    let pre = if is_search { "/" } else { "" };
+    let pre = if is_search { ">" } else { "" };
 
     let button = Button::new(
         text(format!("{pre} {}", &app.search_term))
@@ -102,9 +120,8 @@ pub fn draw_search(app: &Fls) -> Element<'_, Message, iced::Renderer<Theme>> {
     .on_press(Message::Button);
 
     Container::new(button)
-        .padding(Padding::new(8))
+        .padding(Padding::custom(0, 8, 8, 8))
         .width(Length::Fill)
-        // .height(Length::Units(120))
         .center_x()
         .center_y()
         .into()
@@ -113,6 +130,15 @@ pub fn draw_search(app: &Fls) -> Element<'_, Message, iced::Renderer<Theme>> {
 trait PaddingExt {
     fn left(padding: u16) -> Padding {
         Padding::from([0, 0, 0, padding])
+    }
+
+    fn custom(top: u16, right: u16, bottom: u16, left: u16) -> Padding {
+        Padding {
+            top,
+            right,
+            bottom,
+            left,
+        }
     }
 }
 
