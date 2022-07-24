@@ -1,8 +1,16 @@
-// #![feature(drain_filter)]
+#![deny(
+    missing_debug_implementations,
+    unsafe_code,
+    unused_results,
+    warnings,
+    clippy::all,
+    rust_2018_idioms
+)]
 
 mod app;
 mod mode;
 mod tasks;
+mod theme;
 mod ui;
 
 use std::io;
@@ -22,7 +30,7 @@ fn main() -> Result<(), io::Error> {
             resizable: true,
             decorations: true,
             transparent: false,
-            always_on_top: true,
+            always_on_top: false,
             icon: None,
         },
         default_font: None,

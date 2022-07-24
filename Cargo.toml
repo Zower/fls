@@ -6,11 +6,11 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-iced = { version = "0.4.2", features = ["tokio", "pure"] }
-iced_native = { version = "0.5.1" }
+iced = { git = "https://github.com/iced-rs/iced", branch = "master", features = ["tokio", "pure"] }
+iced_native = { git = "https://github.com/iced-rs/iced/", branch = "master" }
 # iced_futures = { path = "../../futures" }
 
-tokio = { version = "1", features = ["fs"] }
+tokio = { version = "1", features = ["fs", "rt"] }
 futures = "0.3.21"
 ouroboros = "0.15.0"
 

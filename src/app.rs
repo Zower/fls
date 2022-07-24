@@ -1,53 +1,80 @@
+use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use iced::{
-    executor, keyboard,
-    pure::{
-        text,
-        widget::{pane_grid, Column, Container, PaneGrid, Text},
-        Application, Element,
-    },
-    Command, Length,
+    executor,
+    pure::{Application, Element},
+    Command,
 };
-use iced_native::{event::Status, subscription::events_with, Event};
-use ouroboros::self_referencing;
-use std::{fs::Metadata, path::PathBuf};
+use iced_native::{event::Status, keyboard::Event, subscription::events_with};
+use std::{fs::Metadata, ops::Index, path::PathBuf};
 
-use crate::tasks::get_files;
+use crate::{
+    mode::{Mode, SearchMode},
+    tasks::get_files,
+    theme::Theme,
+    ui,
+};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Message {
     FilesLoaded(Vec<File>),
-    // FileSearchDone(Vec<File>),
-    // Test(u32),
-    KeyEvent(keyboard::Event),
-    Clicked(pane_grid::Pane),
-    Dragged(pane_grid::DragEvent),
-    Resized(pane_grid::ResizeEvent),
+    KeyEvent(Event),
+    Button,
+}
+
+#[derive(Debug)]
+pub struct DisplayedFile {
+    pub curr_score: i64,
+    pub data: File,
+    // pub hovered: bool,
+    pub selected: bool,
+}
+
+#[derive(Debug)]
+pub struct Files(Vec<DisplayedFile>);
+impl Files {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn files(&self) -> impl Iterator<Item = &DisplayedFile> {
+        self.0.iter().filter(|f| f.curr_score > 0)
+    }
+
+    pub fn files_mut(&mut self) -> impl Iterator<Item = &mut DisplayedFile> {
+        self.0.iter_mut().filter(|f| f.curr_score > 0)
+    }
+
+    pub fn set(&mut self, files: Vec<DisplayedFile>) {
+        self.0 = files;
+    }
+
+    pub(super) fn new_scores(&mut self, score_fn: impl Fn(&File) -> i64) {
+        self.0
+            .iter_mut()
+            .for_each(|f| f.curr_score = score_fn(&f.data));
+    }
+}
+
+impl Index<usize> for Files {
+    type Output = DisplayedFile;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self
+            .files()
+            .skip(index)
+            .next()
+            .expect("index out of bounds")
+    }
 }
 
 pub struct Fls {
-    files: Files,
+    cache: Files,
     pub current_dir: PathBuf,
-    // pub mode: Mode,
-    // pub search_term: String,
-    // pub split: bool,
-    pub should_quit: bool,
-    pub pane: pane_grid::State<PaneState>, // rx: Receiver<Message>,
-                                           // key_rx: Receiver<KeyEvent>,
-                                           // sx: Sender<Message>,
-}
-
-// #[derive(Debug)]
-#[self_referencing]
-struct Files {
-    files: Vec<File>,
-    #[borrows(files)]
-    #[covariant]
-    displayed_files: Vec<&'this File>,
-}
-
-pub enum PaneState {
-    SomePane,
-    AnotherKindOfPane,
+    pub mode: Mode,
+    pub search_term: String,
+    pub hovered: usize,
+    pub should_exit: bool,
+    // pub pane: pane_grid::State<PaneState>, // rx: Receiver<Message>,
 }
 
 impl Application for Fls {
@@ -56,22 +83,48 @@ impl Application for Fls {
     // TODO: Create a config and add it here
     type Flags = PathBuf;
 
+    type Theme = Theme;
+
+    fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
+        let mut command = Command::none();
+
+        match message {
+            Message::FilesLoaded(f) => self.cache.set(f.into_iter().map(Into::into).collect()),
+            Message::KeyEvent(e) => {
+                let action = self.mode.parse_event(e);
+
+                command = self.take_action(action);
+            }
+            Message::Button => {
+                command = self.take_action(Action::NewMode(Mode::Search(SearchMode::Regular)))
+            }
+        }
+        command
+    }
+
+    fn subscription(&self) -> iced::Subscription<Self::Message> {
+        events_with(|e, s| match e {
+            iced_native::Event::Keyboard(e) if s == Status::Ignored => Some(Message::KeyEvent(e)),
+            // TODO: Could be useful for drag and drop files? idk
+            // Event::Window()
+            _ => None,
+        })
+    }
+
+    fn view(&self) -> Element<'_, Message, iced::Renderer<Theme>> {
+        ui::draw(&self)
+    }
+
     fn new(flags: PathBuf) -> (Self, Command<Message>) {
-        // let (sx, rx) = channel(100)
-        let (mut state, pane) = pane_grid::State::new(PaneState::SomePane);
-
-        state.split(
-            iced::pane_grid::Axis::Vertical,
-            &pane,
-            PaneState::AnotherKindOfPane,
-        );
-
         let app = Fls {
-            files: Files::new(Vec::new(), |f| f.iter().collect::<Vec<_>>()),
-            pane: state,
+            cache: Files::new(),
             current_dir: flags,
+            mode: Mode::Normal,
+            search_term: String::new(),
+            hovered: 0,
+            // pane: state,
             // mode: Mode::Normal,
-            should_quit: false,
+            should_exit: false,
         };
 
         let dir = app.current_dir.clone();
@@ -85,178 +138,111 @@ impl Application for Fls {
         "FLS".to_string()
     }
 
-    fn background_color(&self) -> iced::Color {
-        iced::Color::from_rgb(0.29, 0.3, 0.41)
+    fn should_exit(&self) -> bool {
+        self.should_exit
     }
 
-    fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
-        // let x = self.borrow_displayed_files();
-        println!("{:?}", message);
-        Command::none()
+    fn theme(&self) -> Self::Theme {
+        Theme::Default
     }
-
-    fn subscription(&self) -> iced::Subscription<Self::Message> {
-        events_with(|e, s| match e {
-            Event::Keyboard(e) if s == Status::Ignored => Some(Message::KeyEvent(e)),
-            // TODO: Could be useful for drag and drop files? idk
-            // Event::Window()
-            _ => None,
-        })
-    }
-
-    fn view(&self) -> Element<Message> {
-        // let pane_grid = PaneGrid::new(&self.pane, |pane, state| {
-        //     pane_grid::Content::new(match state {
-        //         PaneState::SomePane => text("This is some pane"),
-        //         PaneState::AnotherKindOfPane => text("This is another kind of pane"),
-        //     })
-        // })
-        // .on_drag(Message::Dragged)
-        // .on_click(Message::Clicked)
-        // .on_resize(10, Message::Resized);
-
-        Column::new()
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .push(text("Hello, world!"))
-            .push(text("Hello, pord!"))
-            // .center_x()
-            // .center_y()
-            .into()
-        // Text::new("test").into()
-    }
-
-    // pub fn tick(&mut self) {
-    // while let Ok(change) = self.rx.try_recv() {
-    //     match change {
-    //         Message::NewFiles(mut files) => {
-    //             files.sort_unstable_by_key(|f| !f.metadata.is_dir());
-    //             files[0].hovered = true;
-
-    //             // into() instead
-    //             self.unfiltered_files = to_rc_file(files);
-    //             self.reset_filter();
-    //         }
-    //         _ => (), // StateChange::Refresh => self.get_files(self.current_dir.clone()),
-    //     };
-    // }
-
-    // while let Ok(key) = self.key_rx.try_recv() {
-    //     self.parse_key(key);
-    // }
 }
 
-// Todo should delegate to each mode
-// pub fn parse_key(&mut self, key: KeyEvent) {
-//     let KeyEvent { code, modifiers: _ } = key;
+impl Fls {
+    pub fn files(&self) -> impl Iterator<Item = &DisplayedFile> {
+        self.cache.files()
+    }
 
-//     match code {
-//         KeyCode::Esc => {
-//             self.mode = Mode::Normal;
-//             self.search_term.clear();
-//             self.reset_filter();
-//         }
-//         _ => match self.mode.parse_key(key) {
-//             Some(action) => self.take_action(action),
-//             None => (),
-//         },
-//     }
-// }
+    pub fn files_mut(&mut self) -> impl Iterator<Item = &mut DisplayedFile> {
+        self.cache.files_mut()
+    }
 
-// fn refresh_filter(&mut self) {
-//     let matcher = SkimMatcherV2::default();
+    fn take_action(&mut self, action: Action) -> Command<Message> {
+        println!("take_action: {:?}", action);
 
-//     // TODO sort
-//     if !self.search_term.is_empty() {
-//         self.files = self
-//             .unfiltered_files
-//             .iter()
-//             .filter_map(|f| {
-//                 matcher
-//                     .fuzzy_match(&f.borrow().name, &self.search_term)
-//                     .filter(|score| *score > 0)
-//                     .map(|_| Rc::clone(f))
-//             })
-//             .collect();
-//     } else {
-//         self.reset_filter();
-//     }
+        let mut command = Command::none();
 
-//     self.move_hover(0);
-// }
+        match action {
+            Action::Quit => self.should_exit = true,
+            Action::Up => {
+                self.hovered = self.hovered.saturating_sub(1);
+            }
+            Action::Down => {
+                self.hovered = self
+                    .hovered
+                    .saturating_add(1)
+                    .min(self.files().count().saturating_sub(1));
+            }
+            Action::NewMode(m) => {
+                match m {
+                    Mode::Normal => self.search_term.clear(),
+                    _ => (),
+                }
 
-// fn take_action(&mut self, action: Action) {
-//     match action {
-//         Action::Quit => self.should_quit = true,
-//         Action::Up => {
-//             if let Some((prev_idx, _)) = self.find_hover() {
-//                 self.move_hover(prev_idx.saturating_sub(1))
-//             } else {
-//                 if let Some(file) = self.files.get(0) {
-//                     file.borrow_mut().hovered = true;
-//                 }
-//             }
-//         }
-//         Action::Down => {
-//             if let Some((prev_idx, _)) = self.find_hover() {
-//                 self.move_hover(
-//                     prev_idx
-//                         .saturating_add(1)
-//                         .min(self.files.len().saturating_sub(1)),
-//                 )
-//             } else {
-//                 if let Some(file) = self.files.get(0) {
-//                     file.borrow_mut().hovered = true;
-//                 }
-//             }
-//         }
-//         Action::SearchMode(m) => self.mode = Mode::Search(m),
-//         // consider ptr_eq instead of contains()
-//         Action::ToggleCurrent => {
-//             if let Some(v) = self.find_hover() {
-//                 let mut file = v.1.borrow_mut();
-//                 file.selected = !file.selected;
-//             }
-//         }
-//         Action::Delete => self.delete_current(),
-//         Action::Open => self.open(),
-//         Action::Back => self.go_up_dir(),
-//         Action::AddToSearch(c) => {
-//             self.search_term.push(c);
-//             self.refresh_filter()
-//         }
-//         Action::PopFromSearch => {
-//             self.search_term.pop();
-//             self.refresh_filter()
-//         }
-//         Action::FreezeSearch => {
-//             self.mode = Mode::Normal;
-//             self.search_term.clear();
-//         }
-//     }
-// }
+                self.mode = m;
+                self.refresh_filter();
+            }
+            Action::ToggleCurrent => {
+                let hovered = self.hovered;
+                let _ = self.files_mut().skip(hovered).next().map(|f| {
+                    f.selected = !f.selected;
+                });
+            }
+            Action::Delete => (),
+            Action::Open => {
+                let file = &self.cache[self.hovered];
+                let path = &file.data.path;
+                if file.data.metadata.is_dir() {
+                    let (new, c) = Self::new(path.clone());
 
-// fn get_files(&self, path: PathBuf) {
-//     Task::run(Task::GetFiles(path), self.sx.clone());
-// }
-//
-// fn open(&mut self) {
-//     let file = self.find_hover().unwrap().1.borrow();
+                    *self = new;
+                    command = c;
+                } else {
+                    open::that(&path).unwrap();
+                }
+            }
+            Action::UpDir => {
+                let (new, c) = Self::new(self.current_dir.parent().unwrap().into());
 
-//     let path = file.path.clone();
-//     if file.metadata.is_dir() {
-//         drop(file);
-//         self.current_dir = path;
-//         self.get_files(self.current_dir.clone())
-//     } else {
-//         drop(file);
-//         open::that(&path).unwrap();
-//     }
+                *self = new;
+                command = c;
+            }
+            Action::AddToSearch(c) => {
+                self.search_term.push(c);
+                self.refresh_filter()
+            }
+            Action::PopFromSearch => {
+                let x = self.search_term.pop();
+                println!("search_term: {:?}, {x:?}", self.search_term);
+                self.refresh_filter()
+            }
+            Action::FreezeSearch => {
+                self.mode = Mode::Normal;
+                self.search_term.clear();
+            }
+            Action::None => (),
+        }
 
-//     self.search_term.clear();
-//     self.reset_filter();
-// }
-//
+        command
+    }
+
+    fn refresh_filter(&mut self) {
+        let matcher = SkimMatcherV2::default();
+
+        // TODO sort
+        if !self.search_term.is_empty() {
+            self.cache.new_scores(|f| {
+                matcher
+                    .fuzzy_match(&f.name, &self.search_term)
+                    .unwrap_or(-1)
+            })
+        } else {
+            self.cache.new_scores(|_| i64::MAX);
+        }
+
+        self.hovered = 0;
+    }
+}
+
 //     fn delete_current(&mut self) {
 //         let tx = self.sx.clone();
 
@@ -300,41 +286,6 @@ impl Application for Fls {
 //         self.move_hover(idx);
 //     }
 
-//     fn reset_filter(&mut self) {
-//         self.files.clear();
-//         for file in &self.unfiltered_files {
-//             self.files.push(Rc::clone(file));
-//         }
-
-//         self.move_hover(0);
-//     }
-
-//     pub fn find_hover(&self) -> Option<(usize, &RcFile)> {
-//         self.files
-//             .iter()
-//             .enumerate()
-//             .find(|(_, f)| f.borrow().is_hovered())
-//     }
-
-//     fn move_hover(&mut self, new: usize) {
-//         if let Some(file) = self.find_hover() {
-//             file.1.borrow_mut().hovered = false;
-//         }
-
-//         if let Some(val) = self.files.get(new) {
-//             val.borrow_mut().hovered = true;
-//         }
-//     }
-
-//     fn go_up_dir(&mut self) {
-//         self.current_dir.pop();
-//         self.get_files(self.current_dir.clone());
-
-//         self.search_term.clear();
-//         self.reset_filter();
-//     }
-// }
-
 // async fn delete(file: (bool, PathBuf), _sx: Sender<Message>) {
 //     if file.0 {
 //         fs::remove_dir_all(file.1).await.unwrap();
@@ -356,17 +307,14 @@ impl Application for Fls {
 //     }
 
 //     // sx.send(StateChange::Refresh).await.unwrap();
-// }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct File {
     pub metadata: Metadata,
     pub name: String,
     pub path: PathBuf,
     pub parent: PathBuf,
     pub depth: usize,
-    pub hovered: bool,
-    pub selected: bool,
 }
 
 impl File {
@@ -383,13 +331,7 @@ impl File {
             path,
             parent,
             metadata,
-            hovered: false,
-            selected: false,
         }
-    }
-
-    pub fn is_hovered(&self) -> bool {
-        self.hovered
     }
 }
 
@@ -399,18 +341,31 @@ impl PartialEq for File {
     }
 }
 
+impl From<File> for DisplayedFile {
+    fn from(f: File) -> Self {
+        Self {
+            data: f,
+            curr_score: i64::MAX,
+            selected: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum Action {
     Up,
     Down,
-    Back,
+    UpDir,
     Open,
 
     Delete,
     ToggleCurrent,
-    // SearchMode(SearchMode),
+
+    NewMode(Mode),
     AddToSearch(char),
     PopFromSearch,
     FreezeSearch,
 
     Quit,
+    None,
 }
