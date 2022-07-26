@@ -1,68 +1,88 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::fmt::Debug;
 
-use crate::app::Action;
+use iced::keyboard::Modifiers;
+use iced_native::keyboard::{Event, KeyCode};
 
-#[derive(Debug, PartialEq, Eq)]
+use crate::app::{Action, SettingsView, View};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
     Search(SearchMode),
 }
 
 impl Mode {
-    pub fn parse_key(&self, key: KeyEvent) -> Option<Action> {
+    pub fn parse_event(self, key: Event) -> Action {
         match self {
             Mode::Normal => Mode::parse_normal(key),
             Mode::Search(_) => Mode::parse_search(key),
         }
     }
 
-    pub fn parse_normal(key: KeyEvent) -> Option<Action> {
-        let KeyEvent { code, modifiers: _ } = key;
-
-        match code {
-            KeyCode::Char('e') => Some(Action::Down),
-            KeyCode::Char('i') => Some(Action::Up),
-            KeyCode::Char('n') => Some(Action::Back),
-            KeyCode::Char('o') => Some(Action::Open),
-            KeyCode::Char('d') => Some(Action::Delete),
-            KeyCode::Char('t') => Some(Action::ToggleCurrent),
-            KeyCode::Char('s') | KeyCode::Char('/') => {
-                Some(Action::SearchMode(SearchMode::Regular))
+    pub fn parse_normal(key: Event) -> Action {
+        // let Event { code } = key;
+        if let Event::KeyPressed {
+            key_code,
+            modifiers,
+        } = key
+        {
+            match key_code {
+                KeyCode::Escape => Action::NewMode(Mode::Normal),
+                KeyCode::N => Action::UpDir,
+                KeyCode::E => Action::Down,
+                KeyCode::I => Action::Up,
+                KeyCode::O => Action::Open,
+                KeyCode::D => Action::Delete,
+                KeyCode::T => Action::ToggleCurrent,
+                KeyCode::S if modifiers.contains(Modifiers::CTRL) => {
+                    Action::NewView(View::Settings(SettingsView::default()))
+                }
+                KeyCode::S | KeyCode::Slash => Action::NewMode(Mode::Search(SearchMode::Regular)),
+                KeyCode::Q => Action::Quit,
+                _ => Action::None,
             }
-            KeyCode::Char('g') => Some(Action::SearchMode(SearchMode::Global(10))),
-            KeyCode::Char('q') => Some(Action::Quit),
-            _ => None,
+        } else {
+            Action::None
         }
     }
 
-    fn parse_search(key: KeyEvent) -> Option<Action> {
-        let KeyEvent { code, modifiers } = key;
+    fn parse_search(key: Event) -> Action {
+        // let KeyEvent { code, modifiers } = key;
 
-        if modifiers.contains(KeyModifiers::SHIFT) {
-            match code {
-                KeyCode::Char(c) => {
-                    return Mode::parse_normal(KeyEvent::new(
-                        KeyCode::Char(c.to_ascii_lowercase()),
-                        KeyModifiers::NONE,
-                    ));
-                }
-                _ => (),
+        //TOOD move around in search with shift
+        // if modifiers.contains(KeyModifiers::SHIFT) {
+        //     match code {
+        //         Event::CharacterReceived(c) => {
+        //             return Mode::parse_normal(KeyEvent::new(
+        //                 Event::CharacterReceived(c.to_ascii_lowercase()),
+        //                 KeyModifiers::NONE,
+        //             ));
+        //         }
+        //         _ => (),
+        //     }
+        // }
+
+        // let enter = pressed(KeyCode::Enter);
+        if let Event::KeyPressed { key_code, .. } = key {
+            match key_code {
+                KeyCode::Enter => Action::FreezeSearch,
+                KeyCode::Backspace => Action::PopFromSearch,
+                KeyCode::Escape => Action::NewMode(Mode::Normal),
+                _ => Action::None,
             }
-        }
-
-        match code {
-            KeyCode::Enter => Some(Action::FreezeSearch),
-            KeyCode::Backspace => Some(Action::PopFromSearch),
-            KeyCode::Char(c) => Some(Action::AddToSearch(c)),
-            _ => None,
+        } else {
+            match key {
+                Event::CharacterReceived(c) if c.is_alphabetic() => Action::AddToSearch(c),
+                _ => Action::None,
+            }
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchMode {
     Regular,
     // Files in subdirectories as well
     // .0 is depth
-    Global(usize),
+    // Global(usize),
 }

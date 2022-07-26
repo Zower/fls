@@ -1,85 +1,313 @@
-use std::{cell::RefCell, fs::Metadata, path::PathBuf, rc::Rc};
-
-use crossterm::event::{KeyCode, KeyEvent};
+use colorsys::Rgb;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
-use tokio::{
-    fs,
-    sync::mpsc::{channel, Receiver, Sender},
+use iced::{
+    executor,
+    keyboard::{KeyCode, Modifiers},
+    pure::{Application, Element},
+    Command,
 };
-use tui::style::Color;
+use iced_native::{event::Status, keyboard::Event, subscription::events_with};
+use std::{fs::Metadata, ops::Index, path::PathBuf};
+
+use tokio::fs::remove_file;
 
 use crate::{
-    mode::{Mode, SearchMode},
-    task::Task,
+    mode::Mode,
+    tasks::get_files,
+    theme::{RatioExt, Theme},
+    ui::{self},
 };
 
-type RcFile = Rc<RefCell<File>>;
+#[derive(Debug, Clone)]
+pub enum Message {
+    FilesLoaded(Vec<File>),
+    KeyEvent(Event),
+    FileDeleteResult(Result<(), FileDeleteError>),
+    ColorInput(SettingsInputKind, String),
+    SubmitColor(SettingsInputKind),
+}
 
-pub struct App {
-    unfiltered_files: Vec<RcFile>,
-    pub files: Vec<RcFile>,
+#[derive(Debug, Clone)]
+pub struct FileDeleteError(pub PathBuf);
+
+#[derive(Debug)]
+pub struct DisplayedFile {
+    pub curr_score: i64,
+    pub data: File,
+    // pub hovered: bool,
+    pub selected: bool,
+}
+
+#[derive(Debug)]
+pub struct Files(Vec<DisplayedFile>);
+impl Files {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn remove(&mut self, index: usize) -> DisplayedFile {
+        self.0.remove(index)
+    }
+
+    pub fn drain(&mut self, p: impl Fn(&DisplayedFile) -> bool) -> Vec<DisplayedFile> {
+        let mut vec = Vec::new();
+        let mut i = 0;
+        while i < self.0.len() {
+            let item = &mut self.0[i];
+            if item.curr_score > 0 && p(item) {
+                vec.push(self.0.remove(i));
+            } else {
+                i += 1;
+            }
+        }
+
+        vec
+    }
+
+    pub fn files(&self) -> impl Iterator<Item = &DisplayedFile> {
+        self.0.iter().filter(|f| f.curr_score > 0)
+    }
+
+    pub fn files_mut(&mut self) -> impl Iterator<Item = &mut DisplayedFile> {
+        self.0.iter_mut().filter(|f| f.curr_score > 0)
+    }
+
+    pub fn set(&mut self, files: Vec<DisplayedFile>) {
+        self.0 = files;
+    }
+
+    pub(super) fn new_scores(&mut self, score_fn: impl Fn(&File) -> i64) {
+        self.0
+            .iter_mut()
+            .for_each(|f| f.curr_score = score_fn(&f.data));
+    }
+}
+
+impl Index<usize> for Files {
+    type Output = DisplayedFile;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self
+            .files()
+            .skip(index)
+            .next()
+            .expect("index out of bounds")
+    }
+}
+
+pub struct Fls {
     pub current_dir: PathBuf,
     pub mode: Mode,
     pub search_term: String,
-    pub split: bool,
-    pub should_quit: bool,
-    pub color: Color,
-    rx: Receiver<Message>,
-    sx: Sender<Message>,
+    pub hovered: usize,
+    pub should_exit: bool,
+    pub curr_view: View,
+    pub theme: Theme,
+    cache: Files,
 }
 
-impl App {
-    pub fn new(path: PathBuf) -> Self {
-        let (sx, rx) = channel(100);
+impl Application for Fls {
+    type Executor = executor::Default;
+    type Message = Message;
+    // TODO: Create a config and add it here
+    type Flags = PathBuf;
 
-        let inst = Self {
-            unfiltered_files: vec![],
-            files: vec![],
-            current_dir: path,
-            mode: Mode::Normal,
-            search_term: String::new(),
-            split: false,
-            should_quit: false,
-            color: Color::Green,
-            rx,
-            sx,
-        };
+    type Theme = Theme;
 
-        inst.get_files(inst.current_dir.clone());
-
-        inst
-    }
-
-    pub fn tick(&mut self) {
-        while let Ok(change) = self.rx.try_recv() {
-            match change {
-                Message::NewFiles(mut files) => {
-                    files.sort_unstable_by_key(|f| !f.metadata.is_dir());
-                    files[0].hovered = true;
-
-                    // into() instead
-                    self.unfiltered_files = to_rc_file(files);
-                    self.reset_filter();
-                } // StateChange::Refresh => self.get_files(self.current_dir.clone()),
-            };
+    fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
+        if 1 == 2 % 3 {
+            self.curr_view = View::Settings(SettingsView::default());
         }
-    }
 
-    // Todo should delegate to each mode
-    pub fn parse_key(&mut self, key: KeyEvent) {
-        let KeyEvent { code, modifiers: _ } = key;
+        let mut command = Command::none();
 
-        match code {
-            KeyCode::Esc => {
-                self.mode = Mode::Normal;
-                self.search_term.clear();
-                self.reset_filter();
+        match message {
+            Message::FilesLoaded(f) => self.cache.set(f.into_iter().map(Into::into).collect()),
+            Message::KeyEvent(e) => {
+                let action = match self.curr_view {
+                    View::MainView => self.mode.parse_event(e),
+                    View::Settings { .. } => View::parse_settings(e),
+                };
+
+                command = self.take_action(action);
             }
-            _ => match self.mode.parse_key(key) {
-                Some(action) => self.take_action(action),
-                None => (),
+            Message::FileDeleteResult(r) => r.unwrap(),
+            Message::SubmitColor(id) => match &mut self.curr_view {
+                View::Settings(s) => match id {
+                    SettingsInputKind::PrimaryColor => {
+                        self.theme.primary = Rgb::from_hex_str(&s.primary_input)
+                            .unwrap()
+                            .as_ratio()
+                            .to_color()
+                    }
+                    SettingsInputKind::SecondaryColor => {
+                        self.theme.secondary = Rgb::from_hex_str(&s.secondary_input)
+                            .unwrap()
+                            .as_ratio()
+                            .to_color()
+                    }
+                },
+                _ => unreachable!(),
+            },
+            Message::ColorInput(id, string) => match &mut self.curr_view {
+                View::Settings(s) => match id {
+                    SettingsInputKind::PrimaryColor => s.primary_input = string,
+                    SettingsInputKind::SecondaryColor => s.secondary_input = string,
+                },
+                _ => unreachable!(),
             },
         }
+        command
+    }
+
+    fn subscription(&self) -> iced::Subscription<Self::Message> {
+        events_with(|e, s| match e {
+            iced_native::Event::Keyboard(e) if s == Status::Ignored => Some(Message::KeyEvent(e)),
+            // TODO: Could be useful for drag and drop files? idk
+            // Event::Window()
+            _ => None,
+        })
+    }
+
+    fn view(&self) -> Element<'_, Message, iced::Renderer<Theme>> {
+        ui::draw(&self)
+    }
+
+    fn new(flags: PathBuf) -> (Self, Command<Message>) {
+        let app = Fls {
+            cache: Files::new(),
+            current_dir: flags,
+            mode: Mode::Normal,
+            search_term: String::new(),
+            hovered: 0,
+            // pane: state,
+            // mode: Mode::Normal,
+            should_exit: false,
+            curr_view: View::MainView,
+            theme: Theme::default(),
+        };
+
+        let dir = app.current_dir.clone();
+        (
+            app,
+            Command::perform(get_files(dir), |f| Message::FilesLoaded(f)),
+        )
+    }
+
+    fn title(&self) -> String {
+        "FLS".to_string()
+    }
+
+    fn should_exit(&self) -> bool {
+        self.should_exit
+    }
+
+    fn theme(&self) -> Self::Theme {
+        self.theme
+    }
+}
+
+impl Fls {
+    pub fn files(&self) -> impl Iterator<Item = &DisplayedFile> {
+        self.cache.files()
+    }
+
+    pub fn files_mut(&mut self) -> impl Iterator<Item = &mut DisplayedFile> {
+        self.cache.files_mut()
+    }
+
+    fn take_action(&mut self, action: Action) -> Command<Message> {
+        let mut command = Command::none();
+
+        match action {
+            Action::Quit => self.should_exit = true,
+            Action::Up => {
+                self.hovered = self.hovered.saturating_sub(1);
+            }
+            Action::Down => {
+                self.hovered = self
+                    .hovered
+                    .saturating_add(1)
+                    .min(self.files().count().saturating_sub(1));
+            }
+            Action::NewMode(m) => {
+                match m {
+                    Mode::Normal => self.search_term.clear(),
+                    _ => (),
+                }
+
+                self.mode = m;
+                self.refresh_filter();
+            }
+            Action::ToggleCurrent => {
+                let hovered = self.hovered;
+                let _ = self.files_mut().skip(hovered).next().map(|f| {
+                    f.selected = !f.selected;
+                });
+            }
+            Action::Delete => {
+                // TODO: Double clone is unideal but closures make rust stuped
+                let create_command = |path: PathBuf| {
+                    Command::perform(remove_file(path.clone()), move |r| {
+                        let clone = path.clone();
+                        Message::FileDeleteResult(r.map_err(|_| FileDeleteError(clone)))
+                    })
+                };
+
+                //todo prob deletes once that shouldnt be
+                if self.files().any(|f| f.selected) {
+                    let files = self.cache.drain(|f| f.selected);
+                    command = Command::batch(files.into_iter().map(|f| create_command(f.data.path)))
+                } else {
+                    let file = self.cache.remove(self.hovered);
+
+                    command = create_command(file.data.path)
+                }
+
+                let count = self.files().count() - 1;
+
+                self.hovered = if self.hovered < count {
+                    self.hovered
+                } else {
+                    count
+                }
+            }
+            Action::Open => {
+                let file = &self.cache[self.hovered];
+                let path = &file.data.path;
+                if file.data.metadata.is_dir() {
+                    let (new, c) = Self::new(path.clone());
+
+                    *self = new;
+                    command = c;
+                } else {
+                    open::that(&path).unwrap();
+                }
+            }
+            Action::UpDir => {
+                let (new, c) = Self::new(self.current_dir.parent().unwrap().into());
+
+                *self = new;
+                command = c;
+            }
+            Action::AddToSearch(c) => {
+                self.search_term.push(c);
+                self.refresh_filter()
+            }
+            Action::PopFromSearch => {
+                let x = self.search_term.pop();
+                println!("search_term: {:?}, {x:?}", self.search_term);
+                self.refresh_filter()
+            }
+            Action::FreezeSearch => {
+                self.mode = Mode::Normal;
+                self.search_term.clear();
+            }
+            Action::None => (),
+            Action::NewView(view) => self.curr_view = view,
+        }
+
+        command
     }
 
     fn refresh_filter(&mut self) {
@@ -87,213 +315,26 @@ impl App {
 
         // TODO sort
         if !self.search_term.is_empty() {
-            self.files = self
-                .unfiltered_files
-                .iter()
-                .filter_map(|f| {
-                    matcher
-                        .fuzzy_match(&f.borrow().name, &self.search_term)
-                        .filter(|score| *score > 0)
-                        .map(|_| Rc::clone(f))
-                })
-                .collect();
+            self.cache.new_scores(|f| {
+                matcher
+                    .fuzzy_match(&f.name, &self.search_term)
+                    .unwrap_or(-1)
+            })
         } else {
-            self.reset_filter();
+            self.cache.new_scores(|_| i64::MAX);
         }
 
-        self.move_hover(0);
-    }
-
-    fn take_action(&mut self, action: Action) {
-        match action {
-            Action::Quit => self.should_quit = true,
-            Action::Up => {
-                if let Some((prev_idx, _)) = self.find_hover() {
-                    self.move_hover(prev_idx.saturating_sub(1))
-                } else {
-                    if let Some(file) = self.files.get(0) {
-                        file.borrow_mut().hovered = true;
-                    }
-                }
-            }
-            Action::Down => {
-                if let Some((prev_idx, _)) = self.find_hover() {
-                    self.move_hover(
-                        prev_idx
-                            .saturating_add(1)
-                            .min(self.files.len().saturating_sub(1)),
-                    )
-                } else {
-                    if let Some(file) = self.files.get(0) {
-                        file.borrow_mut().hovered = true;
-                    }
-                }
-            }
-            Action::SearchMode(m) => self.mode = Mode::Search(m),
-            // consider ptr_eq instead of contains()
-            Action::ToggleCurrent => {
-                if let Some(v) = self.find_hover() {
-                    let mut file = v.1.borrow_mut();
-                    file.selected = !file.selected;
-                }
-            }
-            Action::Delete => self.delete_current(),
-            Action::Open => self.open(),
-            Action::Back => self.go_up_dir(),
-            Action::AddToSearch(c) => {
-                self.search_term.push(c);
-                self.refresh_filter()
-            }
-            Action::PopFromSearch => {
-                self.search_term.pop();
-                self.refresh_filter()
-            }
-            Action::FreezeSearch => {
-                self.mode = Mode::Normal;
-                self.search_term.clear();
-            }
-        }
-    }
-
-    fn get_files(&self, path: PathBuf) {
-        Task::run(Task::GetFiles(path), self.sx.clone());
-    }
-
-    fn open(&mut self) {
-        let file = self.find_hover().unwrap().1.borrow();
-
-        let path = file.path.clone();
-        if file.metadata.is_dir() {
-            drop(file);
-            self.current_dir = path;
-            self.get_files(self.current_dir.clone())
-        } else {
-            drop(file);
-            open::that(&path).unwrap();
-        }
-
-        self.search_term.clear();
-        self.reset_filter();
-    }
-
-    fn delete_current(&mut self) {
-        let tx = self.sx.clone();
-
-        let old_idx = self.find_hover().map(|(i, _)| i).unwrap_or(0);
-
-        match self.unfiltered_files.iter().any(|f| f.borrow().selected) {
-            true => {
-                let files = self
-                    .unfiltered_files
-                    .drain_filter(|f| f.borrow().selected)
-                    .map(|f| (f.borrow().metadata.is_dir(), f.borrow().path.clone()))
-                    .collect();
-
-                tokio::spawn(delete_multiple(files, tx));
-            }
-            false => {
-                let file = self
-                    .unfiltered_files
-                    .drain_filter(|f| f.borrow().hovered)
-                    .map(|f| (f.borrow().metadata.is_dir(), f.borrow().path.clone()))
-                    .next()
-                    .unwrap();
-
-                tokio::spawn(delete(file, tx));
-            }
-        }
-
-        self.files.clear();
-        for file in &self.unfiltered_files {
-            self.files.push(Rc::clone(file));
-        }
-
-        let idx = if self.files.get(old_idx).is_some() {
-            old_idx
-        } else if self.files.get(old_idx.saturating_sub(1)).is_some() {
-            old_idx.saturating_sub(1)
-        } else {
-            0
-        };
-
-        self.move_hover(idx);
-    }
-
-    fn reset_filter(&mut self) {
-        self.files.clear();
-        for file in &self.unfiltered_files {
-            self.files.push(Rc::clone(file));
-        }
-
-        self.move_hover(0);
-    }
-
-    pub fn find_hover(&self) -> Option<(usize, &RcFile)> {
-        self.files
-            .iter()
-            .enumerate()
-            .find(|(_, f)| f.borrow().is_hovered())
-    }
-
-    fn move_hover(&mut self, new: usize) {
-        if let Some(file) = self.find_hover() {
-            file.1.borrow_mut().hovered = false;
-        }
-
-        if let Some(val) = self.files.get(new) {
-            val.borrow_mut().hovered = true;
-        }
-    }
-
-    fn go_up_dir(&mut self) {
-        self.current_dir.pop();
-        self.get_files(self.current_dir.clone());
-
-        self.search_term.clear();
-        self.reset_filter();
+        self.hovered = 0;
     }
 }
 
-async fn delete(file: (bool, PathBuf), _sx: Sender<Message>) {
-    if file.0 {
-        fs::remove_dir_all(file.1).await.unwrap();
-    } else {
-        fs::remove_file(file.1).await.unwrap();
-    }
-
-    // sx.send(StateChange::Refresh).await.unwrap();
-}
-
-async fn delete_multiple(files: Vec<(bool, PathBuf)>, _sx: Sender<Message>) {
-    for file in files {
-        if file.0 {
-            // TODO dont clone/borrow
-            fs::remove_dir_all(file.1).await.unwrap();
-        } else {
-            fs::remove_file(file.1).await.unwrap();
-        }
-    }
-
-    // sx.send(StateChange::Refresh).await.unwrap();
-}
-
-fn to_rc_file(files: Vec<File>) -> Vec<RcFile> {
-    files
-        .into_iter()
-        .map(RefCell::new)
-        .map(Rc::new)
-        .collect::<Vec<_>>()
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct File {
     pub metadata: Metadata,
     pub name: String,
     pub path: PathBuf,
     pub parent: PathBuf,
     pub depth: usize,
-    pub hovered: bool,
-    pub selected: bool,
 }
 
 impl File {
@@ -310,13 +351,7 @@ impl File {
             path,
             parent,
             metadata,
-            hovered: false,
-            selected: false,
         }
-    }
-
-    pub fn is_hovered(&self) -> bool {
-        self.hovered
     }
 }
 
@@ -326,26 +361,69 @@ impl PartialEq for File {
     }
 }
 
-#[derive(Debug)]
-pub enum Message {
-    NewFiles(Vec<File>),
-    FileSearchDone(Vec<File>),
-    // Refresh,
+impl From<File> for DisplayedFile {
+    fn from(f: File) -> Self {
+        Self {
+            data: f,
+            curr_score: i64::MAX,
+            selected: false,
+        }
+    }
 }
 
+#[derive(Debug, Clone)]
 pub enum Action {
     Up,
     Down,
-    Back,
+    UpDir,
     Open,
 
     Delete,
     ToggleCurrent,
-    SearchMode(SearchMode),
 
+    NewMode(Mode),
+    NewView(View),
     AddToSearch(char),
     PopFromSearch,
     FreezeSearch,
 
     Quit,
+    None,
+}
+
+#[derive(Debug, Clone)]
+pub enum View {
+    MainView,
+    Settings(SettingsView),
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum SettingsInputKind {
+    PrimaryColor,
+    SecondaryColor,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SettingsView {
+    pub primary_input: String,
+    pub secondary_input: String,
+}
+
+impl View {
+    fn parse_settings(event: Event) -> Action {
+        if let Event::KeyPressed {
+            key_code,
+            modifiers,
+        } = event
+        {
+            match key_code {
+                KeyCode::S if modifiers.contains(Modifiers::CTRL) => {
+                    Action::NewView(View::MainView)
+                }
+                _ => Action::None,
+            }
+        } else {
+            Action::None
+        }
+    }
 }
