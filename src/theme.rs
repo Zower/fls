@@ -26,6 +26,21 @@ pub mod colors {
     pub const DARK_GREEN: Color = Color::from_rgb(0., 0.45, 0.36);
     pub const SEAFOAM_GREEN: Color = Color::from_rgb(0.76, 0.85, 0.72);
     pub const SCALLOP_SEASHELL: Color = Color::from_rgb(0.9, 0.64, 0.6);
+
+    pub const NAVY_BLUE: Color = Color::from_rgb(0.102, 0.169, 0.314);
+    pub const MIDNIGHT_BLUE: Color = Color::from_rgb(0.204, 0.38, 0.565);
+    pub const SAND_DOLLAR: Color = Color::from_rgb(0.839, 0.757, 0.627);
+    pub const SPEARMING: Color = Color::from_rgb(0.459, 0.596, 0.627);
+
+    pub const SAGE: Color = Color::from_rgb(0.576, 0.529, 0.431);
+    pub const BURNT_ORANGE: Color = Color::from_rgb(0.969, 0.384, 0.04);
+    pub const BABY_BLUE: Color = Color::from_rgb(0.722, 0.867, 0.839);
+    pub const IVORY: Color = Color::from_rgb(0.941, 0.933, 0.886);
+
+    pub const ORANGE: Color = Color::from_rgb(0.976, 0.58, 0.231);
+
+    pub const AQUA: Color = Color::from_rgba(0.26, 0.46, 0.54, 1.);
+    pub const L_NAVY: Color = Color::from_rgba(0.14, 0.26, 0.29, 1.);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -40,8 +55,8 @@ pub struct Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            primary: colors::DARK_GREEN,
-            secondary: colors::LIGHT_GREEN,
+            primary: colors::L_NAVY,
+            secondary: colors::AQUA,
         }
     }
 }
@@ -73,7 +88,7 @@ impl container::StyleSheet for Theme {
             background: Some(Background::Color(color)),
             border_radius: 0.,
             border_width: 0.,
-            border_color: colors::DARK_BLUE,
+            border_color: colors::IVORY,
         }
     }
 }
@@ -93,9 +108,9 @@ impl button::StyleSheet for Theme {
             ThemedButton::Default => colors::LIGHT_PURPLE,
             ThemedButton::Search(is_active) => {
                 if is_active {
-                    colors::RED
-                } else {
                     colors::LIGHT_GREEN
+                } else {
+                    colors::AQUA
                 }
             }
         };
@@ -104,9 +119,9 @@ impl button::StyleSheet for Theme {
             shadow_offset: Vector::new(0., 0.),
             background: Some(Background::Color(color)),
             border_radius: 0.,
-            border_width: 1.,
-            border_color: colors::DARK_BLUE,
-            text_color: colors::LIGHT,
+            border_width: 0.7,
+            border_color: colors::IVORY,
+            text_color: colors::IVORY,
         }
     }
 }
@@ -124,9 +139,9 @@ impl iced_native::widget::text::StyleSheet for Theme {
 
     fn appearance(&self, style: Self::Style) -> iced_native::widget::text::Appearance {
         let color = match style {
-            ThemedText::Default => colors::LIGHT,
+            ThemedText::Default => colors::IVORY,
             ThemedText::Hovered => colors::LIGHT_GREEN,
-            ThemedText::Selected => colors::DARK_BLUE,
+            ThemedText::Selected => colors::L_NAVY,
         };
 
         iced_native::widget::text::Appearance { color: Some(color) }
@@ -141,12 +156,12 @@ impl iced::scrollable::StyleSheet for Theme {
             background: None,
             border_radius: 0.,
             border_width: 0.,
-            border_color: colors::DARK_BLUE,
+            border_color: colors::L_NAVY,
             scroller: Scroller {
-                color: colors::BEIGE,
+                color: colors::L_NAVY,
                 border_radius: 0.,
                 border_width: 0.,
-                border_color: colors::DARK_BLUE,
+                border_color: colors::L_NAVY,
             },
         }
     }
@@ -161,10 +176,10 @@ impl iced::text_input::StyleSheet for Theme {
 
     fn active(&self, _: Self::Style) -> iced::text_input::Appearance {
         iced::text_input::Appearance {
-            background: Background::Color(colors::DARK_GRAY),
+            background: Background::Color(colors::IVORY),
             border_radius: 0.,
             border_width: 0.,
-            border_color: colors::SCALLOP_SEASHELL,
+            border_color: colors::IVORY,
         }
     }
 
