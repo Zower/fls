@@ -1,6 +1,8 @@
+use colorsys::Rgb;
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 use iced::{
     executor,
+    keyboard::{KeyCode, Modifiers},
     pure::{Application, Element},
     Command,
 };
@@ -10,18 +12,19 @@ use std::{fs::Metadata, ops::Index, path::PathBuf};
 use tokio::fs::remove_file;
 
 use crate::{
-    mode::{Mode, SearchMode},
+    mode::Mode,
     tasks::get_files,
-    theme::Theme,
-    ui,
+    theme::{RatioExt, Theme},
+    ui::{self},
 };
 
 #[derive(Debug, Clone)]
 pub enum Message {
     FilesLoaded(Vec<File>),
     KeyEvent(Event),
-    Button,
     FileDeleteResult(Result<(), FileDeleteError>),
+    ColorInput(SettingsInputKind, String),
+    SubmitColor(SettingsInputKind),
 }
 
 #[derive(Debug, Clone)]
@@ -60,7 +63,6 @@ impl Files {
 
         vec
     }
-    // self.0.(f)
 
     pub fn files(&self) -> impl Iterator<Item = &DisplayedFile> {
         self.0.iter().filter(|f| f.curr_score > 0)
@@ -94,13 +96,14 @@ impl Index<usize> for Files {
 }
 
 pub struct Fls {
-    cache: Files,
     pub current_dir: PathBuf,
     pub mode: Mode,
     pub search_term: String,
     pub hovered: usize,
     pub should_exit: bool,
-    // pub pane: pane_grid::State<PaneState>, // rx: Receiver<Message>,
+    pub curr_view: View,
+    pub theme: Theme,
+    cache: Files,
 }
 
 impl Application for Fls {
@@ -112,19 +115,47 @@ impl Application for Fls {
     type Theme = Theme;
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
+        if 1 == 2 % 3 {
+            self.curr_view = View::Settings(SettingsView::default());
+        }
+
         let mut command = Command::none();
 
         match message {
             Message::FilesLoaded(f) => self.cache.set(f.into_iter().map(Into::into).collect()),
             Message::KeyEvent(e) => {
-                let action = self.mode.parse_event(e);
+                let action = match self.curr_view {
+                    View::MainView => self.mode.parse_event(e),
+                    View::Settings { .. } => View::parse_settings(e),
+                };
 
                 command = self.take_action(action);
             }
-            Message::Button => {
-                command = self.take_action(Action::NewMode(Mode::Search(SearchMode::Regular)))
-            }
             Message::FileDeleteResult(r) => r.unwrap(),
+            Message::SubmitColor(id) => match &mut self.curr_view {
+                View::Settings(s) => match id {
+                    SettingsInputKind::PrimaryColor => {
+                        self.theme.primary = Rgb::from_hex_str(&s.primary_input)
+                            .unwrap()
+                            .as_ratio()
+                            .to_color()
+                    }
+                    SettingsInputKind::SecondaryColor => {
+                        self.theme.secondary = Rgb::from_hex_str(&s.secondary_input)
+                            .unwrap()
+                            .as_ratio()
+                            .to_color()
+                    }
+                },
+                _ => unreachable!(),
+            },
+            Message::ColorInput(id, string) => match &mut self.curr_view {
+                View::Settings(s) => match id {
+                    SettingsInputKind::PrimaryColor => s.primary_input = string,
+                    SettingsInputKind::SecondaryColor => s.secondary_input = string,
+                },
+                _ => unreachable!(),
+            },
         }
         command
     }
@@ -152,6 +183,8 @@ impl Application for Fls {
             // pane: state,
             // mode: Mode::Normal,
             should_exit: false,
+            curr_view: View::MainView,
+            theme: Theme::default(),
         };
 
         let dir = app.current_dir.clone();
@@ -170,7 +203,7 @@ impl Application for Fls {
     }
 
     fn theme(&self) -> Self::Theme {
-        Theme::Default
+        self.theme
     }
 }
 
@@ -184,8 +217,6 @@ impl Fls {
     }
 
     fn take_action(&mut self, action: Action) -> Command<Message> {
-        println!("take_action: {:?}", action);
-
         let mut command = Command::none();
 
         match action {
@@ -273,6 +304,7 @@ impl Fls {
                 self.search_term.clear();
             }
             Action::None => (),
+            Action::NewView(view) => self.curr_view = view,
         }
 
         command
@@ -295,71 +327,6 @@ impl Fls {
         self.hovered = 0;
     }
 }
-
-//     fn delete_current(&mut self) {
-//         let tx = self.sx.clone();
-
-//         let old_idx = self.find_hover().map(|(i, _)| i).unwrap_or(0);
-
-//         match self.unfiltered_files.iter().any(|f| f.borrow().selected) {
-//             true => {
-//                 let files = self
-//                     .unfiltered_files
-//                     .drain_filter(|f| f.borrow().selected)
-//                     .map(|f| (f.borrow().metadata.is_dir(), f.borrow().path.clone()))
-//                     .collect();
-
-//                 tokio::spawn(delete_multiple(files, tx));
-//             }
-//             false => {
-//                 let file = self
-//                     .unfiltered_files
-//                     .drain_filter(|f| f.borrow().hovered)
-//                     .map(|f| (f.borrow().metadata.is_dir(), f.borrow().path.clone()))
-//                     .next()
-//                     .unwrap();
-
-//                 tokio::spawn(delete(file, tx));
-//             }
-//         }
-
-//         self.files.clear();
-//         for file in &self.unfiltered_files {
-//             self.files.push(Rc::clone(file));
-//         }
-
-//         let idx = if self.files.get(old_idx).is_some() {
-//             old_idx
-//         } else if self.files.get(old_idx.saturating_sub(1)).is_some() {
-//             old_idx.saturating_sub(1)
-//         } else {
-//             0
-//         };
-
-//         self.move_hover(idx);
-//     }
-
-// async fn delete(file: (bool, PathBuf), _sx: Sender<Message>) {
-//     if file.0 {
-//         fs::remove_dir_all(file.1).await.unwrap();
-//     } else {
-//         fs::remove_file(file.1).await.unwrap();
-//     }
-
-//     // sx.send(StateChange::Refresh).await.unwrap();
-// }
-
-// async fn delete_multiple(files: Vec<(bool, PathBuf)>, _sx: Sender<Message>) {
-//     for file in files {
-//         if file.0 {
-//             // TODO dont clone/borrow
-//             fs::remove_dir_all(file.1).await.unwrap();
-//         } else {
-//             fs::remove_file(file.1).await.unwrap();
-//         }
-//     }
-
-//     // sx.send(StateChange::Refresh).await.unwrap();
 
 #[derive(Debug, Clone)]
 pub struct File {
@@ -404,7 +371,7 @@ impl From<File> for DisplayedFile {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Action {
     Up,
     Down,
@@ -415,10 +382,48 @@ pub enum Action {
     ToggleCurrent,
 
     NewMode(Mode),
+    NewView(View),
     AddToSearch(char),
     PopFromSearch,
     FreezeSearch,
 
     Quit,
     None,
+}
+
+#[derive(Debug, Clone)]
+pub enum View {
+    MainView,
+    Settings(SettingsView),
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum SettingsInputKind {
+    PrimaryColor,
+    SecondaryColor,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SettingsView {
+    pub primary_input: String,
+    pub secondary_input: String,
+}
+
+impl View {
+    fn parse_settings(event: Event) -> Action {
+        if let Event::KeyPressed {
+            key_code,
+            modifiers,
+        } = event
+        {
+            match key_code {
+                KeyCode::S if modifiers.contains(Modifiers::CTRL) => {
+                    Action::NewView(View::MainView)
+                }
+                _ => Action::None,
+            }
+        } else {
+            Action::None
+        }
+    }
 }

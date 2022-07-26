@@ -1,8 +1,9 @@
 use std::fmt::Debug;
 
+use iced::keyboard::Modifiers;
 use iced_native::keyboard::{Event, KeyCode};
 
-use crate::app::Action;
+use crate::app::{Action, SettingsView, View};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -20,26 +21,28 @@ impl Mode {
 
     pub fn parse_normal(key: Event) -> Action {
         // let Event { code } = key;
-        if let Event::KeyPressed { key_code, .. } = key {
+        if let Event::KeyPressed {
+            key_code,
+            modifiers,
+        } = key
+        {
             match key_code {
                 KeyCode::Escape => Action::NewMode(Mode::Normal),
+                KeyCode::N => Action::UpDir,
+                KeyCode::E => Action::Down,
+                KeyCode::I => Action::Up,
+                KeyCode::O => Action::Open,
+                KeyCode::D => Action::Delete,
+                KeyCode::T => Action::ToggleCurrent,
+                KeyCode::S if modifiers.contains(Modifiers::CTRL) => {
+                    Action::NewView(View::Settings(SettingsView::default()))
+                }
+                KeyCode::S | KeyCode::Slash => Action::NewMode(Mode::Search(SearchMode::Regular)),
+                KeyCode::Q => Action::Quit,
                 _ => Action::None,
             }
         } else {
-            match key {
-                Event::CharacterReceived('n') => Action::UpDir,
-                Event::CharacterReceived('e') => Action::Down,
-                Event::CharacterReceived('i') => Action::Up,
-                Event::CharacterReceived('o') => Action::Open,
-                Event::CharacterReceived('d') => Action::Delete,
-                Event::CharacterReceived('t') => Action::ToggleCurrent,
-                Event::CharacterReceived('s') | Event::CharacterReceived('/') => {
-                    Action::NewMode(Mode::Search(SearchMode::Regular))
-                }
-                // Event::CharacterReceived('g') => Action::SearchMode(SearchMode::Global(10)),
-                Event::CharacterReceived('q') => Action::Quit,
-                _ => Action::None,
-            }
+            Action::None
         }
     }
 
