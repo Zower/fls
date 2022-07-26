@@ -19,6 +19,8 @@ use app::Fls;
 use iced::{pure::Application, Settings};
 
 fn main() -> Result<(), io::Error> {
+    env_logger::init();
+
     Fls::run(Settings {
         flags: std::env::current_dir().unwrap(),
         id: None,

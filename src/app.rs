@@ -7,6 +7,7 @@ use iced::{
     Command,
 };
 use iced_native::{event::Status, keyboard::Event, subscription::events_with};
+use log::info;
 use std::{fs::Metadata, ops::Index, path::PathBuf};
 
 use tokio::fs::remove_file;
@@ -296,7 +297,7 @@ impl Fls {
             }
             Action::PopFromSearch => {
                 let x = self.search_term.pop();
-                println!("search_term: {:?}, {x:?}", self.search_term);
+                info!("search_term: {:?}, {x:?}", self.search_term);
                 self.refresh_filter()
             }
             Action::FreezeSearch => {
